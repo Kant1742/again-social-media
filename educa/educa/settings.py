@@ -34,6 +34,7 @@ INSTALLED_APPS = [
 
     # Local
     'courses',
+    'students',
 ]
 
 SITE_ID = 1
