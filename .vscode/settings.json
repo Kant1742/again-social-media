@@ -1,3 +1,8 @@
 {
-    "python.autoComplete.extraPaths": ["social_media_again"]
+    "python.autoComplete.extraPaths": [
+        "social_media_again"
+    ],
+    "files.autoSave": "afterDelay",
+    "editor.fontSize": 16,
+    "python.venvPath": "\"python.envFile\": \".env\" "
 }
