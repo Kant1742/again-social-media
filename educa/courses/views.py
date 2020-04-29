@@ -13,6 +13,7 @@ from django.contrib.auth.mixins import (
 from django.forms.models import modelform_factory
 from django.apps import apps
 from django.db.models import Count
+from django.core.cache import cache
 
 from braces.views import CsrfExemptMixin, JsonRequestResponseMixin
 
@@ -180,16 +181,33 @@ class CourseListView(TemplateResponseMixin, View):
     template_name = 'courses/course/list.html'
 
     def get(self, request, subject=None):
-        # Get the number of courses for subjects
-        subjects = Subject.objects.annotate(total_courses=Count('courses'))
+        subjects = cache.get('all_subjects')
+        if not subjects:
+            # Get the number of courses for subjects
+            subjects = Subject.objects.annotate(total_courses=Count('courses'))
+            # In case we want to count them
+            # subjects[0].courses__count (without 'total_courses')
+            # subjects[0].total_courses
+            cache.set('all_subjects', subjects)
+        all_courses = Course.objects.annotate(total_modules=Count('modules'))
+
         # Get the number of modules for courses
         courses = Course.objects.annotate(total_modules=Count('modules'))
         if subject:
             subject = get_object_or_404(Subject, slug=subject)
-            courses = courses.filter(subject=subject)
-            return self.render_to_response({'subjects': subjects,
-                                            'subject': subject,
-                                            'courses': courses})
+            key = f'subject_{subject.id}_courses'
+            courses = cache.get('key')
+            if not courses:
+                courses = all_courses.filter(subject=subject)
+                cache.set(key, courses)
+        else:
+            courses = cache.get('all_courses')
+            if not courses:
+                courses = all_courses
+                cache.set('all_courses', courses)
+        return self.render_to_response({'subjects': subjects,
+                                        'subject': subject,
+                                        'courses': courses})
 
 
 class CourseDetailView(DetailView):
