@@ -9,7 +9,8 @@ from django.views.generic import (
 from django.views.generic.base import View, TemplateResponseMixin
 from django.contrib.auth.mixins import (
     LoginRequiredMixin,
-    PermissionRequiredMixin)
+    PermissionRequiredMixin
+)
 from django.forms.models import modelform_factory
 from django.apps import apps
 from django.db.models import Count
@@ -22,19 +23,8 @@ from .models import Course, Module, Content, Subject
 from .forms import ModuleFormSet
 
 
-class ManageCourseListView(ListView):
-    model = Course
-    paginate_by = 10
-
-    def get_queryset(self):
-        # qs = super(ManageCourseListView, self).get_queryset()  # In the book
-        qs = super().get_queryset()
-        return qs.filter(owner=self.request.user)
-
-
 class OwnerMixin:
     def get_queryset(self):
-        # qs = super(ManageCourseListView, self).get_queryset()  # In the book
         qs = super().get_queryset()
         return qs.filter(owner=self.request.user)
 
@@ -42,19 +32,18 @@ class OwnerMixin:
 class OwnerEditMixin:
     def form_valid(self, form):
         form.instance.owner = self.request.user
-        # return super(OwnerEditMixin, self).form_valid(form)
         return super().form_valid(form)
 
 
 class OwnerCourseMixin(OwnerMixin, LoginRequiredMixin):
     model = Course
     fields = ['subject', 'title', 'slug', 'overview']
-    success_url = reverse_lazy('manage_course_list')
+    success_url = reverse_lazy('courses:manage_course_list')
 
 
 class OwnerCourseEditMixin(OwnerCourseMixin, OwnerEditMixin):
     fields = ['subject', 'title', 'slug', 'overview']
-    success_url = reverse_lazy('manage_course_list')
+    success_url = reverse_lazy('courses:manage_course_list')
     template_name = 'courses/manage/course/form.html'
 
 
@@ -78,7 +67,7 @@ class CourseDeleteView(PermissionRequiredMixin,
                        OwnerCourseMixin,
                        DeleteView):
     template_name = 'courses/manage/course/delete.html'
-    success_url = reverse_lazy('manage_course_list')
+    success_url = reverse_lazy('courses:manage_course_list')
     permission_required = 'courses.delete_course'
 
 
@@ -93,7 +82,7 @@ class CourseModuleUpdateView(TemplateResponseMixin, View):
         self.course = get_object_or_404(Course,
                                         id=pk,
                                         owner=request.user)
-        return super(CourseModuleUpdateView, self).dispatch(request, pk)
+        return super().dispatch(request, pk)
 
     def get(self, request, *args, **kwargs):
         formset = self.get_formset()
@@ -104,7 +93,7 @@ class CourseModuleUpdateView(TemplateResponseMixin, View):
         formset = self.get_formset(data=request.POST)
         if formset.is_valid():
             formset.save()
-            return redirect('manage_course_list')
+            return redirect('courses:manage_course_list')
         return self.render_to_response({'course': self.course,
                                         'formset': formset})
 
@@ -130,18 +119,35 @@ class ContentCreateUpdateView(TemplateResponseMixin, View):
 
     def dispatch(self, request, module_id, model_name, id=None):
         self.module = get_object_or_404(Module,
-                                        id=module_id,
-                                        course__owner=request.user)
+                                       id=module_id,
+                                       course__owner=request.user)
         self.model = self.get_model(model_name)
         if id:
             self.obj = get_object_or_404(self.model,
                                          id=id,
                                          owner=request.user)
-        return super(ContentCreateUpdateView,
-                     self).dispatch(request, module_id, model_name, id)
+        return super().dispatch(request, module_id, model_name, id)
 
     def get(self, request, module_id, model_name, id=None):
         form = self.get_form(self.model, instance=self.obj)
+        return self.render_to_response({'form': form,
+                                        'object': self.obj})
+
+    def post(self, request, module_id, model_name, id=None):
+        form = self.get_form(self.model,
+                             instance=self.obj,
+                             data=request.POST,
+                             files=request.FILES)
+        if form.is_valid():
+            obj = form.save(commit=False)
+            obj.owner = request.user
+            obj.save()
+            if not id:
+                # new content
+                Content.objects.create(module=self.module,
+                                       item=obj)                            
+            return redirect('courses:module_content_list', self.module.id)
+
         return self.render_to_response({'form': form,
                                         'object': self.obj})
 
@@ -154,7 +160,7 @@ class ContentDeleteView(View):
         module = content.module
         content.item.delete()
         content.delete()
-        return redirect('module_content_list', module.id)
+        return redirect('courses:module_content_list', module.id)
 
 
 class ModuleContentListView(ListView):
@@ -176,6 +182,17 @@ class ModuleOrderView(CsrfExemptMixin, JsonRequestResponseMixin, View):
         return self.render_json_response({'saved': 'OK'})
 
 
+class ContentOrderView(CsrfExemptMixin,
+                       JsonRequestResponseMixin,
+                       View):
+    def post(self, request):
+        for id, order in self.request_json.items():
+            Content.objects.filter(id=id,
+                       module__course__owner=request.user) \
+                       .update(order=order)
+        return self.render_json_response({'saved': 'OK'})
+
+
 class CourseListView(TemplateResponseMixin, View):
     model = Course
     template_name = 'courses/course/list.html'
@@ -190,9 +207,6 @@ class CourseListView(TemplateResponseMixin, View):
             # subjects[0].total_courses
             cache.set('all_subjects', subjects)
         all_courses = Course.objects.annotate(total_modules=Count('modules'))
-
-        # Get the number of modules for courses
-        courses = Course.objects.annotate(total_modules=Count('modules'))
         if subject:
             subject = get_object_or_404(Subject, slug=subject)
             key = f'subject_{subject.id}_courses'
